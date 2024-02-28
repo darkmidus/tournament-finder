@@ -13,6 +13,7 @@ future_tournaments = []
 smash = pysmashgg.SmashGG("be71a5a727a0ec1ff01980dffcfb2958")
 geolocator = Nominatim(user_agent="MyApp")
 
+
 # NOTE: page_num is the third arg, allowing you to do your own pagination
 def tournament_info(location, radius):
     try:
@@ -39,6 +40,7 @@ def tournament_info(location, radius):
     except GeocoderUnavailable as e:
         # Handle geocoding service being unavailable
         print(f"GeocoderUnavailable: {e}")
+
 
 @app.route('/results')
 def display_tournaments():
@@ -127,7 +129,8 @@ def display_tournaments():
                 tournament_latitude = float(tournament_location.latitude)
                 tournament_longitude = float(tournament_location.longitude)
 
-                distance = geodesic((original_location.latitude, original_location.longitude), (tournament_latitude, tournament_longitude)).miles
+                distance = geodesic((original_location.latitude, original_location.longitude),
+                                    (tournament_latitude, tournament_longitude)).miles
 
                 result += (
                     f'<a href="https://www.start.gg/tournament/{tournament["slug"]}">'
@@ -160,6 +163,7 @@ def display_tournaments():
     </html>
     '''
     return result
+
 
 @app.route('/', methods=['GET', 'POST'])
 def search_page():
@@ -256,7 +260,6 @@ def search_page():
     </html>
     '''
 
-# ... (remaining code)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
