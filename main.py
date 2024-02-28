@@ -1,38 +1,44 @@
 import pysmashgg
 from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderUnavailable
 from geopy.distance import geodesic
 from datetime import datetime
-from pprintpp import pprint
-from flask import Flask, redirect, url_for
-from flask import request
+from time import sleep
+from flask import Flask, redirect, url_for, request
 
 app = Flask(__name__)
 future_tournaments = []
 
 # Initialize the SmashGGPy class
 smash = pysmashgg.SmashGG("be71a5a727a0ec1ff01980dffcfb2958")
-
+geolocator = Nominatim(user_agent="MyApp")
 
 # NOTE: page_num is the third arg, allowing you to do your own pagination
 def tournament_info(location, radius):
-    geolocator = Nominatim(user_agent="MyApp")
-    address = geolocator.geocode(location)
-    page_num = 1
-    tournaments_by_radius = smash.tournament_show_by_radius(
-        str(address.latitude) + "," + str(address.longitude), radius, page_num)
-    while True:
-        for x in tournaments_by_radius:
-            if datetime.fromtimestamp(int(x["startTimestamp"])) > datetime.now():
-                future_tournaments.append(x)
+    try:
+        address = geolocator.geocode(location)
+        page_num = 1
+        tournaments_by_radius = smash.tournament_show_by_radius(
+            f'{address.latitude},{address.longitude}', radius, page_num)
 
-        if len(future_tournaments) % len(tournaments_by_radius) == 0:
-            page_num += 1
-            tournaments_by_radius = smash.tournament_show_by_radius(
-                str(address.latitude) + "," + str(address.longitude), '150mi',
-                page_num)
-        else:
-            break
+        while True:
+            for x in tournaments_by_radius:
+                if datetime.fromtimestamp(int(x["startTimestamp"])) > datetime.now():
+                    future_tournaments.append(x)
 
+            if len(future_tournaments) % len(tournaments_by_radius) == 0:
+                page_num += 1
+                tournaments_by_radius = smash.tournament_show_by_radius(
+                    f'{address.latitude},{address.longitude}', '150mi', page_num)
+            else:
+                break
+
+            # Add a delay between requests to avoid overwhelming the SmashGG API
+            sleep(1)
+
+    except GeocoderUnavailable as e:
+        # Handle geocoding service being unavailable
+        print(f"GeocoderUnavailable: {e}")
 
 @app.route('/results')
 def display_tournaments():
@@ -109,14 +115,44 @@ def display_tournaments():
                 <a href="/" class="back-button">Back to Search</a>
             </div>
     '''
+    original_location = geolocator.geocode(request.args.get('location'))
 
     for tournament in future_tournaments:
-        result += (
-            f'<a href="https://www.start.gg/tournament/{tournament["slug"]}">'
-            f'<div class="tournament">'
-            f'{tournament["name"]} <hr> Location: {tournament["city"]}, {tournament["state"]} <hr> Entrants: {tournament["entrants"]}'
-            f'</div></a>'
-        )
+        time = datetime.fromtimestamp(int(tournament["startTimestamp"]))
+
+        try:
+            tournament_location = geolocator.geocode(tournament["city"] + ", " + tournament["state"], timeout=10)
+
+            if tournament_location is not None:
+                tournament_latitude = float(tournament_location.latitude)
+                tournament_longitude = float(tournament_location.longitude)
+
+                distance = geodesic((original_location.latitude, original_location.longitude), (tournament_latitude, tournament_longitude)).miles
+
+                result += (
+                    f'<a href="https://www.start.gg/tournament/{tournament["slug"]}">'
+                    f'<div class="tournament">'
+                    f'{tournament["name"]} <hr> Location: {tournament["city"]}, {tournament["state"]} <hr> Entrants: {tournament["entrants"]} <hr> Date: {time.strftime("%I:%M%p %m-%d-%Y")} <hr> Distance: {distance:.2f} miles'
+                    f'</div></a>'
+                )
+            else:
+                result += (
+                    f'<div class="tournament">'
+                    f'{tournament["name"]} <hr> Location: {tournament["city"]}, {tournament["state"]} <hr> Entrants: {tournament["entrants"]} <hr> Date: {time.strftime("%I:%M%p %m-%d-%Y")} <hr> Distance: Not Available'
+                    f'</div>'
+                )
+
+        except GeocoderUnavailable as e:
+            # Handle geocoding service being unavailable
+            print(f"GeocoderUnavailable: {e}")
+            result += (
+                f'<div class="tournament">'
+                f'{tournament["name"]} <hr> Location: {tournament["city"]}, {tournament["state"]} <hr> Entrants: {tournament["entrants"]} <hr> Date: {time.strftime("%I:%M%p %m-%d-%Y")} <hr> Distance: Not Available (Geocoder Unavailable)'
+                f'</div>'
+            )
+
+        # Add a delay between requests to avoid overwhelming the geocoding service
+        sleep(0.5)
 
     result += '''
         </div>
@@ -124,9 +160,6 @@ def display_tournaments():
     </html>
     '''
     return result
-
-
-# ... (previous code)
 
 @app.route('/', methods=['GET', 'POST'])
 def search_page():
@@ -139,7 +172,7 @@ def search_page():
                 return "Please enter both a location and a radius."
             future_tournaments.clear()
             tournament_info(location, radius)
-            return redirect(url_for('display_tournaments'))
+            return redirect(url_for('display_tournaments', location=location))
 
         except Exception as e:
             return f"An error occurred: {e}"
@@ -223,9 +256,7 @@ def search_page():
     </html>
     '''
 
-
 # ... (remaining code)
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
